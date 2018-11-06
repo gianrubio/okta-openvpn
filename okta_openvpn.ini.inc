@@ -18,6 +18,10 @@ Token:
 ## NOT RECCOMMENDED FOR PRODUCTION ENVIRONMENTS
 ## (Example below)
 # AllowUntrustedUsers: True
+## Restrict users login from specific okta groups
+## empty value will allow any user to login
+## (Example below)
+# ValidGroups: okta_admins,okta_vpn_users
 ## Configure how often poll Okta for results of an Okta Verify Push
 ## Values below are what are set by default:
 # MFAPushMaxRetries: 20

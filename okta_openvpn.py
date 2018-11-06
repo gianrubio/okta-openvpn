@@ -97,7 +97,7 @@ class PublicKeyPinsetConnectionPool(urllib3.HTTPSConnectionPool):
 
 class OktaAPIAuth(object):
     def __init__(self, okta_url, okta_token,
-                 username, password, client_ipaddr,
+                 username, password, allowed_groups, client_ipaddr,
                  mfa_push_delay_secs=None,
                  mfa_push_max_retries=None,
                  assert_pinset=None):
@@ -106,6 +106,7 @@ class OktaAPIAuth(object):
         self.okta_token = okta_token
         self.username = username
         self.password = password
+        self.allowed_groups = allowed_groups
         self.client_ipaddr = client_ipaddr
         self.passcode = None
         self.okta_urlparse = urlparse.urlparse(okta_url)
@@ -237,6 +238,10 @@ class OktaAPIAuth(object):
                 if 'status' in res and res['status'] == 'SUCCESS':
                     log.info("User %s is now authenticated "
                              "with MFA via Okta API", self.username)
+
+                    if self.allowed_groups is not None:
+                        return self.is_user_allowed(user_id=rv['_embedded']['user']['id'])
+
                     return True
             if 'errorCauses' in res:
                 msg = res['errorCauses'][0]['errorSummary']
@@ -250,6 +255,27 @@ class OktaAPIAuth(object):
                      status)
             return False
 
+    def is_user_allowed(self, user_id):
+
+        ssws = "SSWS {token}".format(token=self.okta_token)
+        headers = {
+        'user-agent': user_agent,
+        'content-type': 'application/json',
+        'accept': 'application/json',
+        'authorization': ssws,
+        }
+        url = "{base}/api/v1/users/{user_id}/groups".format(base=self.okta_url, user_id=user_id)
+        req = self.pool.urlopen(
+            'GET',
+            url,
+            headers=headers
+        )
+        
+        for group in json.loads(req.data):
+            if group['profile']['name'] in self.allowed_groups:
+                return True
+                
+        return False
 
 class OktaOpenVPNValidator(object):
     def __init__(self):
@@ -263,6 +289,7 @@ class OktaOpenVPNValidator(object):
         self.okta_config = {}
         self.username_suffix = None
         self.always_trust_username = False
+        self.allowed_groups = None
         # These can be modified in the 'okta_openvpn.ini' file.
         # By default, we retry for 2 minutes:
         self.mfa_push_max_retries = "20"
@@ -279,6 +306,7 @@ class OktaOpenVPNValidator(object):
             'UsernameSuffix': self.username_suffix,
             'MFAPushMaxRetries': self.mfa_push_max_retries,
             'MFAPushDelaySeconds': self.mfa_push_delay_secs,
+            'AllowedGroups': self.allowed_groups,
             }
         if self.config_file:
             cfg_path = []
@@ -289,6 +317,10 @@ class OktaOpenVPNValidator(object):
                 try:
                     cfg = ConfigParser.ConfigParser(defaults=parser_defaults)
                     cfg.read(cfg_file)
+
+                    if cfg.get('OktaAPI', 'AllowedGroups'):
+                        self.allowed_groups = cfg.get('OktaAPI', 'AllowedGroups').split(',')
+
                     self.site_config = {
                         'okta_url': cfg.get('OktaAPI', 'Url'),
                         'okta_token': cfg.get('OktaAPI', 'Token'),
@@ -296,6 +328,7 @@ class OktaOpenVPNValidator(object):
                                                         'MFAPushMaxRetries'),
                         'mfa_push_delay_secs': cfg.get('OktaAPI',
                                                        'MFAPushDelaySeconds'),
+                        'allowed_groups': self.allowed_groups,
                         }
                     always_trust_username = cfg.get(
                         'OktaAPI',
@@ -347,6 +380,7 @@ class OktaOpenVPNValidator(object):
             'username': username,
             'password': password,
             'client_ipaddr': client_ipaddr,
+            'allowed_groups': allowed_groups,
         }
         for item in ['mfa_push_max_retries', 'mfa_push_delay_secs']:
             if item in self.site_config:
